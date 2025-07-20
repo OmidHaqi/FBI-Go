@@ -1,7 +1,7 @@
 BINDER_SRC=internal/binder/binder.go
 BINDER_SO=binder.so
-LOADER_SRC=cmd/fbigo/main.go
-LOADER_BIN=fbigo
+LOADER_SRC=cmd/fbi/main.go
+LOADER_BIN=fbi
 
 .PHONY: all build-binder build-loader clean
 

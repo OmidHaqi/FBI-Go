@@ -10,10 +10,10 @@ import (
 func printHelp() {
 	fmt.Print(`FBI-Go: ForceBindIP for Linux (Go)
 Usage:
-  fbigo <IP_ADDRESS> <COMMAND> [ARGS...]
+  fbi <IP_ADDRESS> <COMMAND> [ARGS...]
 
 Example:
-  fbigo 192.168.1.100 curl example.com
+  fbi 192.168.1.100 curl example.com
 
 Notes:
   - You must use an IP address that exists on one of your network interfaces
