@@ -24,6 +24,12 @@ static bind_func_t real_bind = NULL;
 static connect_func_t real_connect = NULL;
 static getaddrinfo_func_t real_getaddrinfo = NULL;
 
+// Function to determine if an IP string is IPv4 or IPv6
+int is_ipv6(const char *ip) {
+    // If it contains a colon, it's IPv6
+    return (strchr(ip, ':') != NULL);
+}
+
 // Load original functions if not already loaded
 void load_original_functions() {
     if (!real_bind) {
@@ -85,12 +91,30 @@ int is_local_ip(const char *ip) {
                 break;
             }
         }
-        // IPv6 could be added here if needed
+        // Check IPv6 addresses
+        else if (ifa->ifa_addr->sa_family == AF_INET6) {
+            struct sockaddr_in6 *addr = (struct sockaddr_in6*)ifa->ifa_addr;
+            char addr_str[INET6_ADDRSTRLEN];
+            inet_ntop(AF_INET6, &(addr->sin6_addr), addr_str, INET6_ADDRSTRLEN);
+
+            // Remove scope id part if present (e.g., fe80::1%eth0 -> fe80::1)
+            char *percent = strchr(addr_str, '%');
+            if (percent) {
+                *percent = '\0';
+            }
+
+            if (strcmp(ip, addr_str) == 0) {
+                found = 1;
+                break;
+            }
+        }
     }
 
     freeifaddrs(ifaddr);
     return found;
-}// Intercept the bind() call
+}
+
+// Intercept the bind() call
 int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     load_original_functions();
 
@@ -107,18 +131,45 @@ int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
         // Fall through to normal bind
     }
 
-    // Only handle IPv4
-    if (addr->sa_family == AF_INET) {
+    // Handle IPv4
+    if (addr->sa_family == AF_INET && !is_ipv6(forced_ip)) {
         struct sockaddr_in new_addr;
         memcpy(&new_addr, addr, sizeof(struct sockaddr_in));
         new_addr.sin_addr.s_addr = inet_addr(forced_ip);
 
-        fprintf(stderr, "[FBI-Go] Intercepted bind: Forcing IP to %s, port %d\n",
+        fprintf(stderr, "[FBI-Go] Intercepted IPv4 bind: Forcing IP to %s, port %d\n",
                 forced_ip, ntohs(new_addr.sin_port));
 
         return real_bind(sockfd, (struct sockaddr *)&new_addr, addrlen);
-    } else {
-        // Not IPv4, just call original
+    }
+    // Handle IPv6
+    else if (addr->sa_family == AF_INET6 && is_ipv6(forced_ip)) {
+        struct sockaddr_in6 new_addr;
+        memcpy(&new_addr, addr, sizeof(struct sockaddr_in6));
+
+        // Convert string to IPv6 address
+        if (inet_pton(AF_INET6, forced_ip, &(new_addr.sin6_addr)) != 1) {
+            fprintf(stderr, "[FBI-Go] Error: Failed to convert %s to IPv6 address\n", forced_ip);
+            return real_bind(sockfd, addr, addrlen);
+        }
+
+        fprintf(stderr, "[FBI-Go] Intercepted IPv6 bind: Forcing IP to %s, port %d\n",
+                forced_ip, ntohs(new_addr.sin6_port));
+
+        return real_bind(sockfd, (struct sockaddr *)&new_addr, addrlen);
+    }
+    // IP family mismatch (IPv4 socket with IPv6 address or vice versa)
+    else if ((addr->sa_family == AF_INET && is_ipv6(forced_ip)) ||
+             (addr->sa_family == AF_INET6 && !is_ipv6(forced_ip))) {
+        fprintf(stderr, "[FBI-Go] Warning: IP family mismatch. Socket is %s but forced IP %s is %s\n",
+                addr->sa_family == AF_INET ? "IPv4" : "IPv6",
+                forced_ip,
+                is_ipv6(forced_ip) ? "IPv6" : "IPv4");
+        // Just call original bind
+        return real_bind(sockfd, addr, addrlen);
+    }
+    else {
+        // Unsupported address family, just call original
         return real_bind(sockfd, addr, addrlen);
     }
 }
@@ -133,10 +184,16 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
         return real_connect(sockfd, addr, addrlen);
     }
 
-    fprintf(stderr, "[FBI-Go] Intercepted connect to %s\n",
-            (addr->sa_family == AF_INET) ?
-            inet_ntoa(((struct sockaddr_in*)addr)->sin_addr) :
-            "non-IPv4 address");
+    // Print connection info
+    char dst_str[INET6_ADDRSTRLEN];
+    if (addr->sa_family == AF_INET) {
+        inet_ntop(AF_INET, &(((struct sockaddr_in*)addr)->sin_addr), dst_str, INET_ADDRSTRLEN);
+    } else if (addr->sa_family == AF_INET6) {
+        inet_ntop(AF_INET6, &(((struct sockaddr_in6*)addr)->sin6_addr), dst_str, INET6_ADDRSTRLEN);
+    } else {
+        strcpy(dst_str, "unknown");
+    }
+    fprintf(stderr, "[FBI-Go] Intercepted connect to %s\n", dst_str);
 
     // Check if this is a local IP we can actually bind to
     if (!is_local_ip(forced_ip)) {
@@ -146,8 +203,8 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
         return real_connect(sockfd, addr, addrlen);
     }
 
-    // Only handle IPv4 connections
-    if (addr->sa_family == AF_INET) {
+    // Handle IPv4
+    if (addr->sa_family == AF_INET && !is_ipv6(forced_ip)) {
         // First bind the socket to our forced IP
         struct sockaddr_in bind_addr;
         memset(&bind_addr, 0, sizeof(bind_addr));
@@ -155,7 +212,7 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
         bind_addr.sin_addr.s_addr = inet_addr(forced_ip);
         bind_addr.sin_port = 0;  // Let the OS choose a port
 
-        fprintf(stderr, "[FBI-Go] Binding to %s before connecting\n", forced_ip);
+        fprintf(stderr, "[FBI-Go] Binding to IPv4 %s before connecting\n", forced_ip);
 
         // Bind to our forced IP
         int bind_result = real_bind(sockfd, (struct sockaddr *)&bind_addr, sizeof(bind_addr));
@@ -164,6 +221,40 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
                     forced_ip, strerror(errno));
             // Continue anyway with original connect
         }
+    }
+    // Handle IPv6
+    else if (addr->sa_family == AF_INET6 && is_ipv6(forced_ip)) {
+        // First bind the socket to our forced IP
+        struct sockaddr_in6 bind_addr;
+        memset(&bind_addr, 0, sizeof(bind_addr));
+        bind_addr.sin6_family = AF_INET6;
+
+        // Convert string to IPv6 address
+        if (inet_pton(AF_INET6, forced_ip, &(bind_addr.sin6_addr)) != 1) {
+            fprintf(stderr, "[FBI-Go] Error: Failed to convert %s to IPv6 address\n", forced_ip);
+            return real_connect(sockfd, addr, addrlen);
+        }
+
+        bind_addr.sin6_port = 0;  // Let the OS choose a port
+
+        fprintf(stderr, "[FBI-Go] Binding to IPv6 %s before connecting\n", forced_ip);
+
+        // Bind to our forced IP
+        int bind_result = real_bind(sockfd, (struct sockaddr *)&bind_addr, sizeof(bind_addr));
+        if (bind_result != 0) {
+            fprintf(stderr, "[FBI-Go] Warning: Failed to bind to %s: %s\n",
+                    forced_ip, strerror(errno));
+            // Continue anyway with original connect
+        }
+    }
+    // IP family mismatch (IPv4 socket with IPv6 address or vice versa)
+    else if ((addr->sa_family == AF_INET && is_ipv6(forced_ip)) ||
+             (addr->sa_family == AF_INET6 && !is_ipv6(forced_ip))) {
+        fprintf(stderr, "[FBI-Go] Warning: IP family mismatch. Socket is %s but forced IP %s is %s\n",
+                addr->sa_family == AF_INET ? "IPv4" : "IPv6",
+                forced_ip,
+                is_ipv6(forced_ip) ? "IPv6" : "IPv4");
+        // Continue without binding - original address family will be used
     }
 
     // Call the original connect

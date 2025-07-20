@@ -9,6 +9,7 @@ FBI-Go works by intercepting network-related system calls (bind, connect, getadd
 ## Features
 
 - Force applications to use a specific IP address/network interface
+- Supports both IPv4 and IPv6 addresses
 - Works with any application that uses standard network system calls
 - No modification of the target application required
 - Transparent to the application being run
@@ -60,6 +61,11 @@ Force curl to use a specific IP address:
 fbi 192.168.1.100 curl example.com
 ```
 
+Force curl to use a specific IPv6 address:
+```bash
+fbi 2001:db8::1 curl example.com
+```
+
 Force a web browser to use a specific interface:
 ```bash
 fbi 10.0.0.5 firefox
@@ -74,7 +80,7 @@ fbi 172.16.1.5 python -m http.server 8080
 
 - You must use an IP address that actually exists on one of your network interfaces
 - To see your available IP addresses, run: `ip addr`
-- Currently, only IPv4 addresses are fully supported
+- Both IPv4 and IPv6 addresses are supported
 - The application being run must use standard system calls for networking
 
 ## How It Works
@@ -93,10 +99,10 @@ The intercepted system calls then ensure that all network connections are bound 
 
 ## Limitations
 
-- Only works on Linux systems that support LD_PRELOAD
-- Primarily designed for IPv4 connections
-- Applications that use non-standard network access methods might not be affected
-- Cannot be used to bind to IP addresses that don't exist on the system
+## Limitations
+
+- Can only bind to IP addresses actually assigned to your interfaces
+- Some applications with special privilege handling may not work correctly
 
 ## Troubleshooting
 
