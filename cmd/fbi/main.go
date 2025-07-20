@@ -8,7 +8,7 @@ import (
 )
 
 func printHelp() {
-	fmt.Print(`FBI-Go: ForceBindIP for Linux (Go)
+	fmt.Print(`FBI-Go: ForceBindIP
 Usage:
   fbi <IP_ADDRESS> <COMMAND> [ARGS...]
 
