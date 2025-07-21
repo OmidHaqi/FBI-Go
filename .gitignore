@@ -4,9 +4,9 @@
 *.dll
 *.so
 *.dylib
+*.zip
 binder.so
 /fbi
-
 # Test binary, built with `go test -c`
 *.test
 
