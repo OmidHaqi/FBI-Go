@@ -43,6 +43,10 @@ This sets `LD_PRELOAD` and `FORCE_BIND_IP` for the launched process using the ex
 
 The version 1 Unix socket service is unprivileged and read-only. It exposes status, diagnostics and plan previews; mutation methods and `HOST_APPLY` are rejected. See [the IPC protocol](docs/daemon-ipc.md) and [UI backend contract](docs/ui-backend-contract.md).
 
+## Desktop preview
+
+The [Tauri desktop client](desktop/README.md) provides Overview, Networks, Applications, Routing plans, Diagnostics, and Settings pages. It reads the version 1 daemon contract and uses a fixed CLI allowlist for desktop application discovery and user policy-file edits. The desktop never runs as root and cannot activate host routing. Run the Go daemon separately in `PLAN_ONLY` mode before starting the desktop app. A clearly labelled `DEMO DATA` mode is available for interface development.
+
 ## Isolated validation and limitations
 
 The namespace backend generates owned policy routes and nftables rules for new IPv4 TCP/UDP flows. Managed IPv4-only application namespaces have a kernel-enforced IPv6 fail-closed guard. DNS and routing tests use isolated synthetic WANs. The rootless suite is run with `bash scripts/test-rootless-netns.sh`; the VM suite has separate snapshot and interactive approval gates. Neither suite proves production host compatibility. D-Bus activation, Flatpak, Wayland, local host services, and application-specific DNS clients are not generally supported. The project does not implement bonding or packet striping; a single TCP connection does not gain additive bandwidth.

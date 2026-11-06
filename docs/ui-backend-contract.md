@@ -1,8 +1,8 @@
 # UI backend contract
 
-This describes the version 1, read-only integration boundary for a future
-unprivileged desktop UI. The version 1 method allowlist and response framing
-are stable for this backend handoff. The UI must never run as root or infer
+This describes the version 1, read-only integration boundary used by the
+unprivileged Tauri desktop UI. The version 1 method allowlist and response framing
+are stable. The UI must never run as root or infer
 enforcement from configuration.
 
 ## Current Unix socket protocol
@@ -47,17 +47,30 @@ inactive.
 
 See [daemon IPC](daemon-ipc.md) for message examples and socket lifecycle rules.
 
-## Other existing CLI surfaces
+## Desktop CLI bridge
 
 `fbi app list --json` returns desktop entries with stable ID, display metadata,
 `launch_supported`, and explicit `limitations`. `fbi app policy list --json`
 returns policy resolutions with `policy`, `status`, `reason`, and resolved
 interface names where available; `show <desktop-id> --json` returns one.
-These are CLI JSON shapes, **not** daemon IPC methods. `fbi multiwan
-scan/status/doctor/plan` are also local reads. Policy `set/remove` writes only
+These are CLI JSON shapes, **not** daemon IPC methods. The desktop Rust bridge
+allows only `app list --json`, `app policy list --json`, `app policy set` with
+validated desktop IDs and MAC WAN IDs, and `app policy remove` with a validated
+desktop ID. It uses `std::process::Command` argument vectors without a shell,
+limits output and execution time, and rejects UID 0. The desktop does not
+expose `app run` or generic CLI execution. The `fbi multiwan scan`, `status`,
+`doctor`, and `plan` commands are also local reads. Policy `set/remove` writes only
 the calling user's TOML under XDG configuration. `fbi app run` requires an
 owned laboratory namespace and cannot start a host-routed desktop
 application. The daemon does not yet expose policy writes or launches.
+
+The Rust bridge connects to the configured private daemon socket, validates
+its filesystem type, mode and owner, and sends only the six version 1
+read-only methods. The UI calls `daemon.capabilities` before requesting status,
+diagnostics and plan. Set `FBI_GO_SOCKET` and `FBI_GO_BIN` when starting the
+desktop client; neither is an authorization mechanism for host mutation.
+Application icons are loaded only from bounded PNG/WebP files within known
+local icon directories; missing icons show a letter fallback.
 
 ## UI state model
 
