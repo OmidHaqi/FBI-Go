@@ -40,6 +40,7 @@ jobs:
       - name: Rust and native checks
         working-directory: desktop
         run: |
+          npm run build:sidecar
           cargo fmt --manifest-path src-tauri/Cargo.toml --check
           cargo test --manifest-path src-tauri/Cargo.toml
           cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings

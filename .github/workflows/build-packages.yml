@@ -61,6 +61,7 @@ jobs:
           npm run lint
           npm test
           npm run build
+          npm run build:sidecar
           cargo fmt --manifest-path src-tauri/Cargo.toml --check
           cargo test --manifest-path src-tauri/Cargo.toml
           cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
