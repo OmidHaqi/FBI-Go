@@ -1,9 +1,53 @@
 package network
 
 import (
+	"encoding/binary"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestLinkInfoKind(t *testing.T) {
+	value := make([]byte, 12)
+	binary.NativeEndian.PutUint16(value[:2], 8)
+	binary.NativeEndian.PutUint16(value[2:4], 1)
+	copy(value[4:], "tun\x00")
+	if got := linkInfoKind(value); got != "tun" {
+		t.Fatalf("link kind: %q", got)
+	}
+	if got := linkInfoKind([]byte{0, 0, 1, 0}); got != "" {
+		t.Fatalf("malformed attribute: %q", got)
+	}
+}
+
+func TestUSBClassificationUsesDeviceAncestry(t *testing.T) {
+	root := t.TempDir()
+	usb := filepath.Join(root, "devices", "usb1", "1-2")
+	pci := filepath.Join(root, "devices", "pci0000:00", "0000:00:1f.6")
+	for _, path := range []string{usb, pci, filepath.Join(root, "class", "usb0"), filepath.Join(root, "class", "enx123"), filepath.Join(root, "class", "wwan0")} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, target := range map[string]string{"usb0": usb, "enx123": pci, "wwan0": usb} {
+		if err := os.Symlink(target, filepath.Join(root, "class", name, "device")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := deviceKindAt(filepath.Join(root, "class"), "usb0", 0); got != "usb_network" {
+		t.Fatalf("USB path: %s", got)
+	}
+	if got := deviceKindAt(filepath.Join(root, "class"), "wwan0", 0); got != "usb_network" {
+		t.Fatalf("USB modem path: %s", got)
+	}
+	if got := deviceKindAt(filepath.Join(root, "class"), "enx123", 0); got != "ethernet_or_other" {
+		t.Fatalf("name-only USB guess: %s", got)
+	}
+	if got := deviceKindAt(filepath.Join(root, "class"), "tun0", 0); got != "vpn" {
+		t.Fatalf("VPN: %s", got)
+	}
+}
 
 func TestClassify(t *testing.T) {
 	r := []Route{{Family: "ipv4", Destination: "0.0.0.0/0", Gateway: "192.0.2.1", Interface: "wlan0"}}

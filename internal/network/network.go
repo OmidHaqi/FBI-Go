@@ -29,6 +29,8 @@ type Device struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
 	Kind      string   `json:"kind"`
+	Driver    string   `json:"driver,omitempty"`
+	Bus       string   `json:"bus,omitempty"`
 	State     string   `json:"state"`
 	AdminUp   bool     `json:"admin_up"`
 	OperState string   `json:"oper_state,omitempty"`
@@ -65,7 +67,7 @@ func classifyLink(name string, flags net.Flags, kind string, addresses []string,
 	if !linkReady {
 		reasons = append(reasons, "link has no carrier or is not operational")
 	}
-	if kind == "loopback" || kind == "virtual" || kind == "vpn" {
+	if kind == "loopback" || kind == "virtual" || kind == "vpn" || kind == "bridge" {
 		reasons = append(reasons, "excluded device type: "+kind)
 	}
 	hasV4 := false
@@ -90,22 +92,57 @@ func classifyLink(name string, flags net.Flags, kind string, addresses []string,
 }
 
 func deviceKind(name string, flags net.Flags) string {
+	return deviceKindAt("/sys/class/net", name, flags)
+}
+
+func deviceKindAt(root, name string, flags net.Flags) string {
 	if flags&net.FlagLoopback != 0 {
 		return "loopback"
-	}
-	if _, err := os.Stat(filepath.Join("/sys/class/net", name, "wireless")); err == nil {
-		return "wifi"
 	}
 	if strings.HasPrefix(name, "tun") || strings.HasPrefix(name, "tap") || strings.HasPrefix(name, "wg") {
 		return "vpn"
 	}
-	if _, err := os.Stat(filepath.Join("/sys/class/net", name, "device")); err != nil {
+	base := filepath.Join(root, name)
+	if _, err := os.Stat(filepath.Join(base, "bridge")); err == nil {
+		return "bridge"
+	}
+	device, err := filepath.EvalSymlinks(filepath.Join(base, "device"))
+	if err != nil {
 		return "virtual"
 	}
-	if strings.HasPrefix(name, "usb") || strings.HasPrefix(name, "enx") {
-		return "usb_or_ethernet"
+	if pathHasComponent(device, "usb") {
+		return "usb_network"
+	}
+	if _, err := os.Stat(filepath.Join(base, "wireless")); err == nil {
+		return "wifi"
+	}
+	if _, err := os.Stat(filepath.Join(base, "phy80211")); err == nil {
+		return "wifi"
+	}
+	if _, err := os.Stat(filepath.Join(base, "wwan")); err == nil {
+		return "wwan"
 	}
 	return "ethernet_or_other"
+}
+
+func pathHasComponent(path, component string) bool {
+	for _, part := range strings.Split(filepath.Clean(path), string(filepath.Separator)) {
+		if part == component || strings.HasPrefix(part, component+"-") || component == "usb" && strings.HasPrefix(part, "usb") && len(part) > 3 && part[3] >= '0' && part[3] <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+func deviceMetadata(name string) (driver, bus string) {
+	base := filepath.Join("/sys/class/net", name, "device")
+	if path, err := filepath.EvalSymlinks(base); err == nil && pathHasComponent(path, "usb") {
+		bus = "usb"
+	}
+	if path, err := filepath.EvalSymlinks(filepath.Join(base, "driver")); err == nil {
+		driver = filepath.Base(path)
+	}
+	return driver, bus
 }
 
 func readCounter(name, counter string) uint64 {
@@ -150,7 +187,19 @@ func Scan() (Snapshot, error) {
 		if len(in.HardwareAddr) > 0 && !isZeroMAC(in.HardwareAddr) {
 			id = fmt.Sprintf("mac:%s", in.HardwareAddr.String())
 		}
-		d := Device{ID: id, Name: in.Name, Kind: deviceKind(in.Name, in.Flags), State: "down", Addresses: []string{}, RXBytes: readCounter(in.Name, "rx_bytes"), TXBytes: readCounter(in.Name, "tx_bytes")}
+		kind := deviceKind(in.Name, in.Flags)
+		if state, ok := linkStates[in.Name]; ok {
+			switch state.kind {
+			case "tun", "tap", "wireguard":
+				kind = "vpn"
+			case "bridge":
+				kind = "bridge"
+			case "veth":
+				kind = "virtual"
+			}
+		}
+		d := Device{ID: id, Name: in.Name, Kind: kind, State: "down", Addresses: []string{}, RXBytes: readCounter(in.Name, "rx_bytes"), TXBytes: readCounter(in.Name, "tx_bytes")}
+		d.Driver, d.Bus = deviceMetadata(in.Name)
 		d.AdminUp = in.Flags&net.FlagUp != 0
 		if state, ok := linkStates[in.Name]; ok {
 			d.OperState, d.Carrier = state.oper, state.carrier
@@ -181,6 +230,26 @@ func Scan() (Snapshot, error) {
 type netlinkState struct {
 	oper    string
 	carrier *bool
+	kind    string
+}
+
+func linkInfoKind(value []byte) string {
+	for len(value) >= 4 {
+		length := int(binary.NativeEndian.Uint16(value[:2]))
+		kind := binary.NativeEndian.Uint16(value[2:4]) & 0x3fff
+		if length < 4 || length > len(value) {
+			return ""
+		}
+		if kind == 1 { // IFLA_INFO_KIND
+			return strings.TrimRight(string(value[4:length]), "\x00")
+		}
+		aligned := (length + 3) &^ 3
+		if aligned > len(value) {
+			return ""
+		}
+		value = value[aligned:]
+	}
+	return ""
 }
 
 func readNetlinkStates() (map[string]netlinkState, error) {
@@ -216,6 +285,8 @@ func readNetlinkStates() (map[string]netlinkState, error) {
 					carrier := attr.Value[0] != 0
 					state.carrier = &carrier
 				}
+			case 18: // IFLA_LINKINFO; nested IFLA_INFO_KIND describes tun/veth/bridge.
+				state.kind = linkInfoKind(attr.Value)
 			}
 		}
 		if name != "" {
