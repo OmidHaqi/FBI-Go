@@ -1,0 +1,77 @@
+name: Build Linux packages
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      source_sha:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    env:
+      FBI_GO_RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = '${{ inputs.source_sha }}'
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install build and package inspectors
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxdo-dev libssl-dev rpm cpio file
+      - name: Apply one release version
+        run: python3 release/version.py apply --version '${{ inputs.version }}'
+      - name: Validate source
+        run: |
+          go build ./...
+          go test -count=1 ./...
+          go vet ./...
+          python3 -m unittest discover -s release -p 'test_*.py'
+          git diff --check
+      - name: Validate desktop
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run lint
+          npm test
+          npm run build
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo test --manifest-path src-tauri/Cargo.toml
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Build native packages
+        working-directory: desktop
+        run: npm run tauri build -- --target '${{ matrix.target }}' --bundles deb,rpm,appimage
+      - name: Validate and name artifacts
+        run: sh release/validate-packages.sh '${{ inputs.version }}' '${{ matrix.arch }}' desktop/src-tauri/target/${{ matrix.target }}/release/bundle "$RUNNER_TEMP/fbi-packages"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fbi-go-${{ matrix.arch }}
+          path: ${{ runner.temp }}/fbi-packages/*
+          if-no-files-found: error
+          retention-days: 14

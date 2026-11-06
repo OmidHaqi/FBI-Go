@@ -1,0 +1,71 @@
+name: Stable release
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+permissions:
+  contents: read
+concurrency:
+  group: fbi-go-release-publication
+  cancel-in-progress: false
+jobs:
+  version:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'develop' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+      - name: Verify merged main source and resolve version
+        id: resolve
+        run: |
+          set -eu
+          sha='${{ github.event.pull_request.merge_commit_sha }}'
+          test "$(git rev-parse HEAD)" = "$sha"
+          git fetch origin main --tags
+          git merge-base --is-ancestor "$sha" origin/main
+          version=$(python3 release/version.py resolve --channel stable --sha "$sha")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$sha" >> "$GITHUB_OUTPUT"
+  build:
+    needs: version
+    uses: ./.github/workflows/build-packages.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      source_sha: ${{ needs.version.outputs.source_sha }}
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fbi-go-*
+          path: dist
+          merge-multiple: true
+      - name: Require complete architecture matrix and checksums
+        run: |
+          set -eu
+          for arch in x86_64 aarch64; do
+            for extension in deb rpm AppImage; do
+              test -s "dist/FBI-Go_${{ needs.version.outputs.version }}_linux_${arch}.${extension}"
+            done
+          done
+          (cd dist && sha256sum ./*.deb ./*.rpm ./*.AppImage > SHA256SUMS.txt)
+      - name: Publish stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh release/publish.sh 'v${{ needs.version.outputs.version }}' '${{ needs.version.outputs.source_sha }}' stable dist

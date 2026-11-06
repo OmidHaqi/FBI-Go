@@ -1,0 +1,58 @@
+name: Develop pre-release
+on:
+  push:
+    branches: [develop]
+permissions:
+  contents: read
+concurrency:
+  group: fbi-go-release-publication
+  cancel-in-progress: false
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve immutable version
+        id: resolve
+        run: |
+          git fetch origin --tags
+          version=$(python3 release/version.py resolve --channel dev --run-number '${{ github.run_number }}' --sha '${{ github.sha }}')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+  build:
+    needs: version
+    uses: ./.github/workflows/build-packages.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      source_sha: ${{ github.sha }}
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fbi-go-*
+          path: dist
+          merge-multiple: true
+      - name: Require complete architecture matrix and checksums
+        run: |
+          set -eu
+          for arch in x86_64 aarch64; do
+            for extension in deb rpm AppImage; do
+              test -s "dist/FBI-Go_${{ needs.version.outputs.version }}_linux_${arch}.${extension}"
+            done
+          done
+          (cd dist && sha256sum ./*.deb ./*.rpm ./*.AppImage > SHA256SUMS.txt)
+      - name: Publish only after all assets validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh release/publish.sh 'v${{ needs.version.outputs.version }}' '${{ github.sha }}' dev dist
