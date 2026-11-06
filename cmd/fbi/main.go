@@ -9,17 +9,15 @@ import (
 	"github.com/omidhaqi/FBI-Go/internal/network"
 	"github.com/omidhaqi/FBI-Go/internal/policy"
 	"github.com/omidhaqi/FBI-Go/internal/routing"
-	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
-const version = "2.0.0-lab"
+var version = "2.0.0-lab" // overridden at release build time
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "Usage: fbi version | multiwan scan|status|doctor|plan [--json] | multiwan plan-m2 <inventory.json> [--json] | app list|policy|run | daemon serve|ping|version|capabilities|status|diagnostics|plan | <IP_ADDRESS> <COMMAND> [ARGS...]")
+	fmt.Fprintln(os.Stderr, "Usage: fbi version | multiwan scan|status|doctor|plan [--json] | multiwan plan-m2 <inventory.json> [--json] | app list|policy|run | daemon serve|ping|version|capabilities|status|diagnostics|plan")
 }
 func emit(v any, jsonOutput bool) error {
 	if jsonOutput {
@@ -150,27 +148,7 @@ func run(args []string) error {
 		}
 		return emit(s, jsonOutput)
 	}
-	if len(args) < 2 {
-		usage()
-		return fmt.Errorf("legacy usage requires IP and command")
-	}
-	if net.ParseIP(args[0]) == nil {
-		return fmt.Errorf("invalid IP address %q", args[0])
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	binder := filepath.Join(filepath.Dir(exe), "binder.so")
-	if _, err := os.Stat(binder); err != nil {
-		return fmt.Errorf("legacy binder unavailable at %s: %w", binder, err)
-	}
-	cmd := exec.Command(args[1], args[2:]...)
-	cmd.Env = append(os.Environ(), "LD_PRELOAD="+binder, "FORCE_BIND_IP="+args[0])
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return fmt.Errorf("unknown command %q; use --help", args[0])
 }
 func main() {
 	if err := run(os.Args[1:]); err != nil {
