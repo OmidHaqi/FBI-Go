@@ -1,0 +1,25 @@
+[package]
+name = "fbi-go-desktop"
+version = "0.1.0"
+description = "FBI-Go Linux desktop client"
+authors = ["FBI-Go contributors"]
+license = "MIT"
+edition = "2021"
+
+[features]
+default = ["desktop"]
+desktop = ["dep:tauri", "dep:tauri-build"]
+
+[lib]
+name = "fbi_go_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [], optional = true }
+
+[dependencies]
+tauri = { version = "2", features = [], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+libc = "0.2"

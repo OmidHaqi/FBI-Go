@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "FBI-Go first-party desktop window",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

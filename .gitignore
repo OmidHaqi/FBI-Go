@@ -44,6 +44,11 @@ Thumbs.db
 __pycache__/
 *.pyc
 *.tar.gz
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+/desktop/*.tsbuildinfo
 **/evidence/
 **/packet-evidence/
 **/guest-captures/
