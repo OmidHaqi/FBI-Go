@@ -1,6 +1,6 @@
 # CLI reference
 
-`fbi version [--json]` prints the build label. All `multiwan` commands below are read-only and need no sudo:
+`fbi version [--json]` prints the source-tree build label or embedded package release version. It does not imply that routing is active. All `multiwan` commands below are read-only and need no sudo:
 
 | Command | Result |
 | --- | --- |
@@ -28,4 +28,4 @@ Policy writes affect only the calling user's private TOML file. They do not rout
 
 `fbi daemon serve --dry-run --socket /absolute/private/control.sock` starts an unprivileged read-only Unix socket server. `fbi daemon ping|version|capabilities|status|diagnostics|plan --socket <path> [--json]` calls its version 1 methods. `plan` additionally accepts `--mode`, `--wan`, `--failure`, and `--fallback` for a preview. The parent socket directory must belong to the user and have mode `0700`. See [IPC](daemon-ipc.md).
 
-Legacy compatibility is `fbi <local-IP> <command> [args...]`, which uses adjacent `binder.so` through `LD_PRELOAD`. It intercepts selected socket calls; it is not the Multi-WAN engine and does not guarantee WAN egress. No CLI command enables `HOST_APPLY`.
+No CLI command enables `HOST_APPLY` or rewrites host routes.

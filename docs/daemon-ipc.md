@@ -1,6 +1,6 @@
 # Local control IPC (protocol version 1)
 
-The daemon is a regular-user, `PLAN_ONLY` process. It has no network apply method. It does not install a service, modify a cgroup, or change routing, nftables, DNS or sysctls. `ISOLATED_TEST` and `HOST_APPLY` are reserved mode names, not selectable modes.
+The daemon is a regular-user, `PLAN_ONLY` process. It has no network apply method. It does not install a service, modify a cgroup, or change routing, nftables, DNS or sysctls. `ISOLATED_TEST` and `HOST_APPLY` are reserved mode names, not selectable modes. The Linux desktop package includes the `fbi` CLI sidecar but does not start this daemon automatically; launch it in the same user's private runtime directory before connecting the desktop.
 
 ## Trust boundary and framing
 

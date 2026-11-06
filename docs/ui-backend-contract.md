@@ -31,13 +31,15 @@ newline. Unknown parameters are rejected. Clients must call
 | `daemon.diagnostics` | None | `read_only=true`, `findings[]` with `code`, `status`, `detail` |
 | `daemon.plan` | `{"policy":ApplicationPolicy}` | `state="PLANNED"`, `applied=false`, `requested_policy`, `validated_wan_id`, `proposed_resources`, `conflicts`, `warnings`, `required_operations` |
 
-`snapshot.devices[]` includes stable `id`, `name`, `kind`, `state`, `admin_up`,
+`snapshot.devices[]` includes stable `id`, `name`, `kind`, optional `driver` and `bus`, `state`, `admin_up`,
 `oper_state`, optional `carrier`, `addresses`, optional `gateways`, RX/TX byte
 counters, `candidate`, and `reasons`. `snapshot.routes[]` includes family,
 destination, gateway, interface, table, metric, and optional source. These are
 inventory observations. `candidate=true` does not establish health or uplink
 independence. Diagnostic finding statuses are `INFO`, `WARNING`, `BLOCKED`,
 and `UNKNOWN`; a blocked or unknown finding must remain visible to the user.
+
+The native desktop additionally samples local `/sys/class/net` RX/TX byte counters at one-second intervals and returns nullable bytes-per-second rates from its own Rust command. This sampler is read-only and separate from daemon protocol version 1. A missing or reset counter yields `null`, never an invented zero-rate measurement. USB ancestry in sysfs is reported as `usb_network` when detected; an interface name alone is not USB evidence.
 
 `daemon.plan` is an offline preview. Its numeric identifiers have not been
 reserved and its conflict list is incomplete when foreign inventory is
@@ -71,6 +73,8 @@ diagnostics and plan. Set `FBI_GO_SOCKET` and `FBI_GO_BIN` when starting the
 desktop client; neither is an authorization mechanism for host mutation.
 Application icons are loaded only from bounded PNG/WebP files within known
 local icon directories; missing icons show a letter fallback.
+
+The packaged desktop includes a same-architecture `fbi` sidecar. The bridge resolves it next to the desktop executable unless `FBI_GO_BIN` explicitly selects an absolute executable for development. Neither path authorizes host routing. Window and tray commands affect only the UI process.
 
 ## UI state model
 

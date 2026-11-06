@@ -1,19 +1,17 @@
 # Installation and prerequisites
 
-FBI-Go 2.0 currently builds from source on Linux. Go 1.23 or later is required. `make all` also builds the optional legacy `binder.so` library, which requires a C compiler and cgo. No daemon or system service is installed by this build.
+FBI-Go 2.0 builds from source on Linux with Go 1.23 or later. No daemon or system service is installed by this build.
 
 ```sh
 go build ./...
-make all
+go build -o fbi ./cmd/fbi
 ./fbi version
 ./fbi multiwan scan --json
 ```
 
-Keep `fbi` and `binder.so` together only if using legacy ForceBindIP mode. The current command reports `2.0.0-lab`; this label reflects that host routing is unavailable. Read-only inspection and policy-file commands run as the calling user. Do not run the CLI as root for ordinary inspection.
+A source-tree CLI build reports `2.0.0-lab`; release packages embed the release version. Neither label implies host routing is available. Read-only inspection and policy-file commands run as the calling user. Do not run the CLI as root for ordinary inspection.
 
-Rootless integration tests additionally require `unshare`, `mount`, `ip`, `nft`, `nsenter`, `ping`, Python 3, and kernel support for unprivileged user and network namespaces. The launcher checks capabilities and isolation before it changes any test namespace. `bash scripts/test-rootless-netns.sh` never authorizes host routing. The separate VM harness requires a disposable VM, a verified snapshot, and interactive approval; it is not an installation step.
-
-Fedora, Debian, and Ubuntu packaging and production service installation are not provided. See [CLI commands](cli.md), [IPC](daemon-ipc.md), and [safety](safety.md).
+The desktop release workflow builds x86_64 and aarch64 RPM, DEB, and AppImage artifacts. Download only the package for your architecture and verify it against `SHA256SUMS.txt`. RPM/DEB packages include the `fbi` CLI next to the desktop executable. AppImage also includes the sidecar. No production service is installed. Stable and development-release packages use different version metadata; see [releases](releases.md). See [CLI commands](cli.md), [IPC](daemon-ipc.md), and [safety](safety.md).
 
 ## Desktop client
 

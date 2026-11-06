@@ -2,8 +2,6 @@
 
 This Tauri 2, React and TypeScript client is an unprivileged view of the existing FBI-Go backend. It uses the version 1 read-only Unix socket daemon for network status, diagnostics, capabilities and routing previews. The Rust bridge invokes only allowlisted `fbi app` commands for desktop-entry discovery and the calling user's policy file. No shell, sudo, host apply, or generic command endpoint is exposed.
 
-The small `desktop/go.mod` is a module boundary: it keeps the desktop tree outside the root Go module's `go test ./...` traversal. The desktop does not implement a second Go backend.
-
 ## Requirements
 
 - Linux, Node.js 20 or later, npm, Rust and Cargo.
@@ -35,10 +33,14 @@ npm run tauri build -- --no-bundle
 FBI_GO_BIN="$(realpath ../fbi)" FBI_GO_SOCKET="$XDG_RUNTIME_DIR/fbi-go/control.sock" ./src-tauri/target/release/fbi-go-desktop
 ```
 
+`npm run tauri build -- --bundles deb,rpm,appimage` creates Linux installers for the current architecture. The build script compiles the Go `fbi` CLI as a bundled sidecar; installed RPM/DEB packages place it alongside the desktop binary in `/usr/bin`. The UI does not start the daemon: run the read-only daemon separately as the same user. See [installation](../docs/install.md) and [release process](../docs/releases.md).
+
+The native window uses custom title controls and follows the system light/dark preference. Settings can enable or disable **close to tray**. When enabled, closing the window hides it; the tray menu has Open and Quit actions. On Linux, use the tray menu rather than relying on tray-icon click events. The tray and Dashboard display sampled `/sys/class/net` RX/TX rates; a rate is an interface counter difference over a monotonic interval, not an Internet speed test. A newly seen, removed, or reset interface shows no rate until the next valid sample. WAN health and RTT are still unavailable.
+
 The native process refuses UID 0. If the daemon is disconnected, the header shows `DAEMON OFFLINE` and the Diagnostics page explains the error. Start or restart the daemon and use Refresh data. The daemon socket and its parent directory must be owned by the current user and private (`0600` and `0700` respectively).
 
 The web-only layout preview uses `VITE_DEMO=1 npm run dev` and displays a prominent `DEMO DATA` badge. `VITE_DEMO=1 npm run tauri dev` does the same in a native development window when the Vite port is available. Demo policy actions are disabled. Without that flag, the desktop uses actual daemon/CLI data; if either service is unavailable, its error is shown and no values are fabricated. `npm run build`, `npm test`, and `npm run lint` check the frontend. `cargo test --manifest-path src-tauri/Cargo.toml` checks the Rust bridge when Linux Tauri libraries are installed. If those system libraries are unavailable, `cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --lib` checks the isolated Rust bridge; this does not validate the Tauri window build.
 
-Policy edits save only the current user's TOML configuration. Saved policy does not mean active routing. Application launch, session management, rollback and `HOST_APPLY` have no desktop action. The displayed RX/TX values are cumulative interface counters, not bandwidth rates; live health and latency are unavailable. The UI uses logical spacing to support future Persian RTL translation, but English is the only current translation.
+Policy edits save only the current user's TOML configuration. Saved policy does not mean active routing. Application launch, session management, rollback and `HOST_APPLY` have no desktop action. Cumulative RX/TX totals come from the daemon's network snapshot; rates come from the local sysfs sampler and are labelled separately. The UI uses logical spacing to support future Persian RTL translation, but English is the only current translation.
 
 See [the UI backend contract](../docs/ui-backend-contract.md), [IPC protocol](../docs/daemon-ipc.md), and [operator safety](../docs/safety.md).
