@@ -1,0 +1,35 @@
+{
+  "snapshot": {
+    "devices": [
+      {"id":"wifi-fixture","name":"wifi0","kind":"wifi","state":"up","admin_up":true,"oper_state":"up","carrier":true,"addresses":["192.0.2.9/24"],"gateways":["192.0.2.1"],"rx_bytes":0,"tx_bytes":0,"candidate":true,"reasons":[]},
+      {"id":"usb-fixture","name":"usb0","kind":"usb_or_ethernet","state":"up","admin_up":true,"oper_state":"up","carrier":true,"addresses":["198.51.100.99/24"],"gateways":["198.51.100.216"],"rx_bytes":0,"tx_bytes":0,"candidate":true,"reasons":[]},
+      {"id":"vpn-fixture","name":"vpn-tun0","kind":"vpn","state":"up","admin_up":true,"oper_state":"up","carrier":true,"addresses":["100.64.0.2/30"],"candidate":false,"reasons":["excluded device type: vpn"]},
+      {"id":"bridge-1","name":"docker0","kind":"virtual","state":"up","admin_up":true,"oper_state":"up","carrier":true,"addresses":["172.17.0.1/16"],"candidate":false,"reasons":["excluded device type: virtual"]},
+      {"id":"bridge-2","name":"br-test","kind":"virtual","state":"up","admin_up":true,"oper_state":"up","carrier":true,"addresses":["172.18.0.1/16"],"candidate":false,"reasons":["excluded device type: virtual"]},
+      {"id":"disconnected","name":"eno9","kind":"ethernet_or_other","state":"down","admin_up":true,"oper_state":"down","carrier":false,"addresses":[],"candidate":false,"reasons":["link has no carrier or is not operational"]}
+    ],
+    "routes": [
+      {"family":"ipv4","destination":"0.0.0.0/0","gateway":"192.0.2.1","interface":"wifi0","table":254,"metric":100},
+      {"family":"ipv4","destination":"0.0.0.0/0","gateway":"198.51.100.216","interface":"usb0","table":254,"metric":100},
+      {"family":"ipv6","destination":"::/0","gateway":"2001:db8:1::1","interface":"wifi0","table":254,"metric":100},
+      {"family":"ipv4","destination":"0.0.0.0/0","interface":"vpn-tun0","table":2022,"metric":0},
+      {"family":"ipv4","destination":"203.0.113.0/24","interface":"vpn-tun0","table":1245622400,"metric":0}
+    ]
+  },
+  "rules": [
+    {"priority":1,"table":2022,"mark":8227,"mask":4294967295,"has_mark":true},
+    {"priority":9000,"table":2022,"mark":8228,"mask":4294967295,"has_mark":true},
+    {"priority":9001,"table":2022,"mark":8227,"mask":4294967295,"has_mark":true},
+    {"priority":9002,"table":2022,"mark":8228,"mask":4294967295,"has_mark":true},
+    {"priority":32768,"table":254,"mark":0,"mask":0,"has_mark":false}
+  ],
+  "used_tables":[2022,1245622400,254],
+  "foreign_marks":[8227,8228],
+  "nft_tables":["throne","docker"],
+  "rules_complete":true,
+  "tables_complete":true,
+  "marks_complete":true,
+  "nft_complete":true,
+  "vpn_present":true,
+  "ipv6_policy":"system"
+}
