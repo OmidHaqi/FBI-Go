@@ -6,6 +6,8 @@ export interface Device {
   id: string
   name: string
   kind: string
+  driver?: string
+  bus?: string
   state: string
   admin_up: boolean
   oper_state?: string

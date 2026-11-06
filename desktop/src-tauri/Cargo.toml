@@ -1,6 +1,6 @@
 [package]
 name = "fbi-go-desktop"
-version = "0.1.0"
+version = "2.0.0"
 description = "FBI-Go Linux desktop client"
 authors = ["FBI-Go contributors"]
 license = "MIT"
@@ -18,8 +18,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-tauri = { version = "2", features = [], optional = true }
+tauri = { version = "2", features = ["tray-icon", "image-png"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 libc = "0.2"
+
+[profile.release]
+strip = true

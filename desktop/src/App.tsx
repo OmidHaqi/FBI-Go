@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, AlertCircle, AlertTriangle, ArrowDownLeft, ArrowRight, ArrowUpRight, Blocks, Check, ChevronDown, CircleHelp, Command, Compass, HardDrive, Info, LayoutDashboard, LockKeyhole, Moon, Network, RefreshCw, Router, Search, Settings2, ShieldCheck, Sun, Wifi, X } from 'lucide-react'
+import { Activity, AlertCircle, AlertTriangle, ArrowDownLeft, ArrowRight, ArrowUpRight, Blocks, Check, ChevronDown, CircleHelp, Command, Compass, HardDrive, Info, LayoutDashboard, LockKeyhole, Moon, Network, RefreshCw, Router, Search, Settings2, ShieldCheck, Sun, Usb, Wifi, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { backendInfo, cliRead, demoMode, iconData, loadLiveData, removePolicy, setPolicy } from './bridge'
 import type { LiveData } from './bridge'
 import { demoData } from './demo'
 import { bytes, deviceGroup, severity } from './format'
 import type { ApplicationEntry, Device, FailureBehavior, Finding, PolicyResolution } from './types'
+import WindowBar from './WindowBar'
+import { speed, useTraffic } from './traffic'
+import type { TrafficSample } from './traffic'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 
 type Page = 'dashboard' | 'networks' | 'applications' | 'routing' | 'diagnostics' | 'settings'
 type Theme = 'system' | 'light' | 'dark'
@@ -32,7 +36,7 @@ function Empty({ icon: Icon = CircleHelp, title, children }: { icon?: LucideIcon
 }
 
 function DeviceGlyph({ device }: { device: Device }) {
-  const Icon = device.kind === 'wifi' ? Wifi : device.kind === 'vpn' ? LockKeyhole : device.kind === 'virtual' ? Blocks : Network
+  const Icon = device.kind === 'wifi' || device.kind === 'wwan' ? Wifi : device.kind === 'usb_network' ? Usb : device.kind === 'vpn' ? LockKeyhole : device.kind === 'virtual' || device.kind === 'bridge' ? Blocks : Network
   return <div className={`device-glyph ${device.candidate ? 'device-glyph-active' : ''}`}><Icon size={19} /></div>
 }
 
@@ -41,12 +45,13 @@ function DeviceState({ device }: { device: Device }) {
   return <span className={`state-text ${up ? 'state-up' : 'state-down'}`}><span className="state-dot" />{up ? 'Link up' : 'Link down'}</span>
 }
 
-function DeviceCard({ device, compact = false }: { device: Device; compact?: boolean }) {
+function DeviceCard({ device, compact = false, traffic }: { device: Device; compact?: boolean; traffic?: TrafficSample }) {
   return <article className={`device-card ${compact ? 'device-card-compact' : ''}`}>
     <div className="device-card-head"><DeviceGlyph device={device} /><div className="device-identity"><h3>{device.name}</h3><span>{device.kind.replaceAll('_', ' ')}</span></div><DeviceState device={device} /></div>
     <div className="device-card-detail"><span>WAN candidate</span><strong>{device.candidate ? 'Yes' : 'No'}</strong></div>
     <div className="device-card-detail"><span>IPv4 / IPv6</span><strong className="truncate">{device.addresses?.join(', ') || 'No address observed'}</strong></div>
-    {!compact && <><div className="device-card-detail"><span>Gateway</span><strong>{device.gateways?.join(', ') || 'Not observed'}</strong></div><div className="device-card-detail"><span>Carrier · operstate</span><strong>{device.carrier === undefined ? 'Unknown' : device.carrier ? 'Present' : 'Absent'} · {device.oper_state || 'Unknown'}</strong></div></>}
+    {!compact && <><div className="device-card-detail"><span>Gateway</span><strong>{device.gateways?.join(', ') || 'Not observed'}</strong></div><div className="device-card-detail"><span>Carrier · operstate</span><strong>{device.carrier === undefined ? 'Unknown' : device.carrier ? 'Present' : 'Absent'} · {device.oper_state || 'Unknown'}</strong></div><div className="device-card-detail"><span>Driver · bus</span><strong>{device.driver || 'Unknown'} · {device.bus || 'Unknown'}</strong></div></>}
+    <div className="device-rates"><span>↓ {speed(traffic?.rx_bytes_per_second)}</span><span>↑ {speed(traffic?.tx_bytes_per_second)}</span></div>
     <div className="device-counters"><span><ArrowDownLeft size={14} /> RX {bytes(device.rx_bytes)}</span><span><ArrowUpRight size={14} /> TX {bytes(device.tx_bytes)}</span></div>
     {!compact && device.reasons?.length > 0 && <p className="device-reason">{device.reasons.join(' · ')}</p>}
   </article>
@@ -57,29 +62,27 @@ function FindingItem({ finding }: { finding: Finding }) {
   return <div className="finding-item"><div className={`finding-icon finding-${finding.status.toLowerCase()}`}><Icon size={17} /></div><div><div className="finding-title">{finding.code.replaceAll('_', ' ')}</div><p>{finding.detail}</p></div><Badge tone={finding.status === 'BLOCKED' ? 'danger' : finding.status === 'WARNING' ? 'warn' : 'neutral'}>{finding.status}</Badge></div>
 }
 
-function Dashboard({ data, navigate }: { data: LiveData; navigate: (page: Page) => void }) {
+function Dashboard({ data, navigate, traffic }: { data: LiveData; navigate: (page: Page) => void; traffic: Map<string, TrafficSample> }) {
   const devices = data.status?.snapshot.devices ?? []
   const candidates = devices.filter(d => d.candidate)
   const findings = data.diagnostics?.findings ?? []
-  const totalRx = devices.reduce((n, d) => n + d.rx_bytes, 0)
-  const totalTx = devices.reduce((n, d) => n + d.tx_bytes, 0)
   return <>
     <PageTitle eyebrow="SYSTEM OVERVIEW" title="Network at a glance">Observed host inventory and read-only routing status.</PageTitle>
     <div className="hero"><div><span className="hero-label"><ShieldCheck size={17} /> SAFETY MODE</span><h2>Plan only. No host routing changes.</h2><p>FBI-Go can inspect and preview your network. Production host activation is unsupported.</p><button className="hero-link" onClick={() => navigate('routing')}>View routing plan <ArrowRight size={16} /></button></div><div className="hero-mark"><Compass size={84} strokeWidth={1} /></div></div>
     <div className="stat-grid">
       <div className="stat-card"><span>Detected interfaces</span><strong>{data.status ? devices.length : '—'}</strong><small>From the latest read-only snapshot</small></div>
       <div className="stat-card"><span>WAN candidates</span><strong>{data.status ? candidates.length : '—'}</strong><small>Eligibility does not prove connectivity</small></div>
-      <div className="stat-card"><span>RX / TX totals</span><strong className="stat-pair">{data.status ? bytes(totalRx) : '—'} <span>/</span> {data.status ? bytes(totalTx) : '—'}</strong><small>Interface counters, not live bandwidth</small></div>
+      <div className="stat-card"><span>Live traffic</span><strong>{traffic.size || '—'}</strong><small>Per-interface rates below; no VPN double-counting</small></div>
       <div className="stat-card"><span>Compatibility</span><strong className="stat-label">{data.diagnostics ? severity(findings) : 'Unknown'}</strong><small>{data.diagnostics ? `${findings.length} findings` : 'Daemon diagnostics unavailable'}</small></div>
     </div>
     <div className="section-heading"><div><h2>Interfaces</h2><p>Physical links and virtual devices</p></div><button className="text-button" onClick={() => navigate('networks')}>All networks <ArrowRight size={15} /></button></div>
-    {devices.length ? <div className="device-grid">{devices.slice(0, 3).map(d => <DeviceCard key={d.id + d.name} device={d} compact />)}</div> : <Empty icon={Network} title="No interface data">Connect the read-only daemon to load a real snapshot.</Empty>}
+    {devices.length ? <div className="device-grid">{devices.slice(0, 3).map(d => <DeviceCard key={d.id + d.name} device={d} traffic={traffic.get(d.name)} compact />)}</div> : <Empty icon={Network} title="No interface data">Connect the read-only daemon to load a real snapshot.</Empty>}
     <div className="section-heading"><div><h2>Attention needed</h2><p>Compatibility and safety findings</p></div><button className="text-button" onClick={() => navigate('diagnostics')}>Open diagnostics <ArrowRight size={15} /></button></div>
     <div className="panel">{findings.length ? findings.filter(f => f.status !== 'INFO').slice(0, 3).map((f, i) => <FindingItem key={`${f.code}-${i}`} finding={f} />) : <Empty icon={ShieldCheck} title="No findings available">Diagnostics are unavailable or returned no warnings. This is not proof of routing safety.</Empty>}</div>
   </>
 }
 
-function Networks({ data }: { data: LiveData }) {
+function Networks({ data, traffic }: { data: LiveData; traffic: Map<string, TrafficSample> }) {
   const devices = data.status?.snapshot.devices ?? []
   const physical = devices.filter(d => deviceGroup(d) === 'Physical')
   const virtual = devices.filter(d => deviceGroup(d) === 'Virtual / VPN')
@@ -87,7 +90,7 @@ function Networks({ data }: { data: LiveData }) {
     <div className="note"><Info size={17} /><span>WAN candidate means the interface passed conservative local checks. Internet reachability and uplink independence have not been measured.</span></div>
     {(['Physical', 'Virtual / VPN'] as const).map(group => {
       const list = group === 'Physical' ? physical : virtual
-      return <section key={group}><div className="section-heading"><div><h2>{group}</h2><p>{list.length} observed interfaces</p></div></div>{list.length ? <div className="device-grid">{list.map(d => <DeviceCard key={d.id + d.name} device={d} />)}</div> : <Empty icon={Network} title={`No ${group.toLowerCase()} devices observed`}>The current snapshot does not include devices in this group.</Empty>}</section>
+      return <section key={group}><div className="section-heading"><div><h2>{group}</h2><p>{list.length} observed interfaces</p></div></div>{list.length ? <div className="device-grid">{list.map(d => <DeviceCard key={d.id + d.name} device={d} traffic={traffic.get(d.name)} />)}</div> : <Empty icon={Network} title={`No ${group.toLowerCase()} devices observed`}>The current snapshot does not include devices in this group.</Empty>}</section>
     })}
     <div className="section-heading"><div><h2>Observed routes</h2><p>Read-only routing inventory</p></div></div>
     <div className="table-scroll"><table><thead><tr><th>Family</th><th>Destination</th><th>Gateway</th><th>Interface</th><th>Table</th><th>Metric</th></tr></thead><tbody>{(data.status?.snapshot.routes ?? []).map((r, i) => <tr key={`${r.interface}-${r.table}-${i}`}><td>{r.family}</td><td className="mono">{r.destination}</td><td className="mono">{r.gateway || '—'}</td><td>{r.interface}</td><td>{r.table}</td><td>{r.metric}</td></tr>)}</tbody></table>{!data.status?.snapshot.routes?.length && <div className="table-empty">No routes available in the current snapshot.</div>}</div>
@@ -173,8 +176,11 @@ function Diagnostics({ data }: { data: LiveData }) {
 }
 
 function Settings({ data, theme, setTheme }: { data: LiveData; theme: Theme; setTheme: (theme: Theme) => void }) {
+  const [trayMode, setTrayMode] = useState(() => localStorage.getItem('fbi-go-tray-mode') !== 'false')
+  useEffect(() => { if (isTauri()) void invoke('set_tray_mode', { enabled: trayMode }).catch(() => {}) }, [trayMode])
+  function changeTrayMode(enabled: boolean) { localStorage.setItem('fbi-go-tray-mode', String(enabled)); setTrayMode(enabled) }
   return <><PageTitle eyebrow="PREFERENCES" title="Settings">Desktop appearance and backend connection details.</PageTitle><div className="settings-grid"><div className="panel padded"><h2>Appearance</h2><p className="muted">System colors are followed by default.</p><div className="theme-options">{(['system', 'light', 'dark'] as const).map(option => { const Icon = option === 'system' ? HardDrive : option === 'light' ? Sun : Moon; return <button key={option} className={`theme-button ${theme === option ? 'selected' : ''}`} onClick={() => setTheme(option)}><Icon size={18} />{option[0].toUpperCase() + option.slice(1)}{theme === option && <Check size={15} />}</button> })}</div><div className="detail-pair"><span>Language</span><strong>English</strong></div><p className="field-help">Layout uses logical spacing and is ready for a future Persian RTL translation.</p></div>
-    <div className="panel padded"><h2>Backend connection</h2><div className="detail-pair"><span>Mode</span><strong>{data.capabilities?.mode || 'Disconnected'}</strong></div><div className="detail-pair"><span>Daemon socket</span><strong className="mono wrap">{data.info?.socket || 'Unavailable'}</strong></div><div className="detail-pair"><span>CLI binary</span><strong className="mono wrap">{data.info?.cli || 'Unavailable'}</strong></div><div className="detail-pair"><span>Host apply</span><strong>UNSUPPORTED</strong></div><p className="field-help">Start `fbi daemon serve --dry-run` in a private directory. The UI only connects to the selected version 1 socket.</p></div></div></>
+    <div className="panel padded"><h2>Backend connection</h2><div className="detail-pair"><span>Mode</span><strong>{data.capabilities?.mode || 'Disconnected'}</strong></div><div className="detail-pair"><span>Daemon socket</span><strong className="mono wrap">{data.info?.socket || 'Unavailable'}</strong></div><div className="detail-pair"><span>CLI binary</span><strong className="mono wrap">{data.info?.cli || 'Unavailable'}</strong></div><div className="detail-pair"><span>Host apply</span><strong>UNSUPPORTED</strong></div><label className="tray-toggle"><input type="checkbox" checked={trayMode} onChange={event => changeTrayMode(event.target.checked)} />Keep monitoring when window closes</label><p className="field-help">Disable tray mode to exit when closing the window. GNOME Shell may need an AppIndicator extension to show the tray icon; disable tray mode if Open and Quit are not visible.</p><p className="field-help">Start `fbi daemon serve --dry-run` in a private directory. The UI only connects to the selected version 1 socket.</p></div></div></>
 }
 
 export default function App() {
@@ -183,7 +189,9 @@ export default function App() {
   const [loading, setLoading] = useState(!demoMode)
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null)
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('fbi-go-theme') as Theme) || 'system')
+  const traffic = useTraffic()
   useEffect(() => { if (theme === 'system') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = theme; localStorage.setItem('fbi-go-theme', theme) }, [theme])
+  useEffect(() => { if (isTauri()) void invoke('set_tray_mode', { enabled: localStorage.getItem('fbi-go-tray-mode') !== 'false' }).catch(() => {}) }, [])
   useEffect(() => { if (!demoMode) void refresh() }, [])
   function notify(message: string, error = false) { setToast({ message, error }); window.setTimeout(() => setToast(null), 6000) }
   async function refresh() { if (demoMode) return; setLoading(true); try { setData(await loadLiveData()) } finally { setLoading(false) } }
@@ -193,8 +201,8 @@ export default function App() {
     setData(previous => ({ ...previous, policies: policies ?? [], info }))
   }
   const activePage = pages.find(item => item.id === page)!
-  return <div className="app-shell" dir="ltr"><aside className="sidebar"><div className="brand"><div className="brand-symbol"><Compass size={24} strokeWidth={1.8} /></div><div><strong>FBI-Go</strong><span>NETWORK MANAGER</span></div></div><div className="sidebar-label">WORKSPACE</div><nav aria-label="Main navigation">{pages.map(item => <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} aria-current={page === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}><item.icon size={18} strokeWidth={1.8} /><span>{item.label}</span></button>)}</nav><div className="sidebar-bottom"><div className="sidebar-mode"><span className="sidebar-mode-icon"><ShieldCheck size={17} /></span><span><strong>Protected by design</strong><small>Host apply unavailable</small></span></div><div className="sidebar-version">FBI-Go 2.0 · Desktop preview</div></div></aside>
-    <div className="main-shell"><header className="topbar"><div className="breadcrumb"><span>FBI-Go</span><span className="breadcrumb-divider">/</span><strong>{activePage.label}</strong></div><div className="topbar-actions">{demoMode && <Badge tone="demo">DEMO DATA</Badge>}<Badge tone={data.capabilities?.mode === 'PLAN_ONLY' ? 'warn' : 'neutral'}>{data.capabilities?.mode || 'DAEMON OFFLINE'}</Badge><button className="icon-button" aria-label="Refresh data" title="Refresh data" onClick={() => void refresh()} disabled={loading || demoMode}><RefreshCw size={17} className={loading ? 'spin' : ''} /></button></div></header><main id="main-content" className="content" tabIndex={-1}>{loading && !data.status && !demoMode && <div className="note" role="status">Loading read-only backend data…</div>}{data.errors.length > 0 && page !== 'diagnostics' && !demoMode && <div className="error-banner"><AlertCircle size={17} /><span>Some backend data is unavailable. <button onClick={() => setPage('diagnostics')}>View details</button></span></div>}{page === 'dashboard' && <Dashboard data={data} navigate={setPage} />}{page === 'networks' && <Networks data={data} />}{page === 'applications' && <Applications data={data} onReload={refreshPolicies} notify={notify} />}{page === 'routing' && <RoutingPlans data={data} />}{page === 'diagnostics' && <Diagnostics data={data} />}{page === 'settings' && <Settings data={data} theme={theme} setTheme={setTheme} />}</main><footer className="footer"><span><span className="footer-dot" /> {demoMode ? 'Demo data · no backend connection' : data.capabilities ? 'Read-only daemon connected' : 'Daemon connection unavailable'}</span><span>PLAN_ONLY · No host changes</span></footer></div>
+  return <><WindowBar /><div className="app-shell" dir="ltr"><aside className="sidebar"><div className="brand"><div className="brand-symbol"><Compass size={24} strokeWidth={1.8} /></div><div><strong>FBI-Go</strong><span>NETWORK MANAGER</span></div></div><div className="sidebar-label">WORKSPACE</div><nav aria-label="Main navigation">{pages.map(item => <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} aria-current={page === item.id ? 'page' : undefined} onClick={() => setPage(item.id)}><item.icon size={18} strokeWidth={1.8} /><span>{item.label}</span></button>)}</nav><div className="sidebar-bottom"><div className="sidebar-mode"><span className="sidebar-mode-icon"><ShieldCheck size={17} /></span><span><strong>Protected by design</strong><small>Host apply unavailable</small></span></div><div className="sidebar-version">FBI-Go {import.meta.env.VITE_APP_VERSION} · PLAN_ONLY</div></div></aside>
+    <div className="main-shell"><header className="topbar"><div className="breadcrumb"><span>FBI-Go</span><span className="breadcrumb-divider">/</span><strong>{activePage.label}</strong></div><div className="topbar-actions">{demoMode && <Badge tone="demo">DEMO DATA</Badge>}<Badge tone={data.capabilities?.mode === 'PLAN_ONLY' ? 'warn' : 'neutral'}>{data.capabilities?.mode || 'DAEMON OFFLINE'}</Badge><button className="icon-button" aria-label="Refresh data" title="Refresh data" onClick={() => void refresh()} disabled={loading || demoMode}><RefreshCw size={17} className={loading ? 'spin' : ''} /></button></div></header><main id="main-content" className="content" tabIndex={-1}>{loading && !data.status && !demoMode && <div className="note" role="status">Loading read-only backend data…</div>}{data.errors.length > 0 && page !== 'diagnostics' && !demoMode && <div className="error-banner"><AlertCircle size={17} /><span>Some backend data is unavailable. <button onClick={() => setPage('diagnostics')}>View details</button></span></div>}{page === 'dashboard' && <Dashboard data={data} navigate={setPage} traffic={traffic} />}{page === 'networks' && <Networks data={data} traffic={traffic} />}{page === 'applications' && <Applications data={data} onReload={refreshPolicies} notify={notify} />}{page === 'routing' && <RoutingPlans data={data} />}{page === 'diagnostics' && <Diagnostics data={data} />}{page === 'settings' && <Settings data={data} theme={theme} setTheme={setTheme} />}</main><footer className="footer"><span><span className="footer-dot" /> {demoMode ? 'Demo data · no backend connection' : data.capabilities ? 'Read-only daemon connected' : 'Daemon connection unavailable'}</span><span>PLAN_ONLY · No host changes</span></footer></div>
     {toast && <div className={`toast ${toast.error ? 'toast-error' : ''}`} role="status"><span>{toast.message}</span><button onClick={() => setToast(null)} aria-label="Dismiss notification"><X size={16} /></button></div>}
-  </div>
+  </div></>
 }

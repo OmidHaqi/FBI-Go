@@ -10,7 +10,7 @@ export function bytes(value: number): string {
 }
 
 export function deviceGroup(device: Device): 'Physical' | 'Virtual / VPN' {
-  return device.kind === 'vpn' || device.kind === 'virtual' || device.kind === 'loopback' ? 'Virtual / VPN' : 'Physical'
+  return device.kind === 'vpn' || device.kind === 'virtual' || device.kind === 'bridge' || device.kind === 'loopback' ? 'Virtual / VPN' : 'Physical'
 }
 
 export function severity(findings: Finding[]): 'BLOCKED' | 'WARNING' | 'UNKNOWN' | 'INFO' {

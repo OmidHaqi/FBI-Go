@@ -142,8 +142,8 @@ pub fn daemon_read(method: &str) -> Result<Value, String> {
 }
 
 fn daemon_read_at(path: &Path, method: &str) -> Result<Value, String> {
-    verify_socket(&path)?;
-    let mut stream = UnixStream::connect(&path).map_err(|e| format!("connect daemon: {e}"))?;
+    verify_socket(path)?;
+    let mut stream = UnixStream::connect(path).map_err(|e| format!("connect daemon: {e}"))?;
     stream
         .set_read_timeout(Some(DEADLINE))
         .map_err(|e| e.to_string())?;

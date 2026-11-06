@@ -5,7 +5,6 @@
 *.so
 *.dylib
 *.zip
-binder.so
 /fbi
 # Test binary, built with `go test -c`
 *.test
@@ -20,7 +19,6 @@ binder.so
 go.work
 
 # Build artifacts
-binder.h
 
 # IDE specific files
 .idea/
@@ -47,6 +45,7 @@ __pycache__/
 /desktop/node_modules/
 /desktop/dist/
 /desktop/src-tauri/target/
+/desktop/src-tauri/binaries/
 /desktop/src-tauri/gen/
 /desktop/*.tsbuildinfo
 **/evidence/
