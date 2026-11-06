@@ -1,0 +1,9 @@
+# Network discovery and diagnostics
+
+`fbi multiwan scan --json` reads Linux interface and route state through netlink. It reports device IDs, type, administrative state, carrier/operstate, IPv4 and IPv6 addresses, default-route gateways, RX/TX byte counters, and conservative IPv4 WAN candidacy with reasons. The device ID uses a MAC address when available; MAC randomization, replacement, and spoofing can change or duplicate it. Interface names are not stable policy identities.
+
+A candidate needs an operational link, usable IPv4 source address, and IPv4 default route with a gateway. VPN and virtual devices are excluded. This does not prove Internet reachability, independent physical uplinks, or safe policy routing. `fbi multiwan status` does not run live probes; health monitoring and host enforcement remain inactive. A fallback to `/sys` and `/proc` under restricted netlink access omits some policy tables and rules and is reported in `warnings`.
+
+`fbi multiwan doctor --json` reads policy rules, routes, nftables inventory, NetworkManager activity, Docker presence, VPN/TUN interfaces, IPv6 defaults, resolver configuration, and `rp_filter`/`src_valid_mark` values where permissions allow. Findings use `INFO`, `WARNING`, `BLOCKED`, or `UNKNOWN`. An unreadable nftables ruleset is `UNKNOWN`, not empty. Do not treat a report without a finding as proof that a conflict does not exist.
+
+NetworkManager profiles, Docker bridges/NAT, VPN routing and DNS are never modified by these commands. A plan contains proposed identifiers only; it does not reserve marks, rules, tables, or nftables objects. Physical host multi-WAN activation and `HOST_APPLY` are unsupported. See [safety](safety.md) and [UI backend contract](ui-backend-contract.md).

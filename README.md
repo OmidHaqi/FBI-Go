@@ -1,122 +1,50 @@
-# FBI-Go
+# FBI-Go 2.0
 
-FBI-Go is a utility that allows you to force applications to use a specific network interface/IP address for their outgoing connections, similar to the ForceBindIP utility for Windows. This is particularly useful for systems with multiple network interfaces where you need to control which interface is used for specific applications.
+FBI-Go is a Linux Multi-WAN research backend with a read-only host CLI and an isolated networking laboratory. It discovers devices and builds routing plans. Managed application routing, DNS, IPv6 fail-closed protection, and transactional recovery have been tested in rootless namespaces and a disposable VM. **Production host routing and `HOST_APPLY` remain unsupported.** A plan or saved policy does not change host networking. The legacy ForceBindIP mode remains available.
 
-## How It Works
+## Build
 
-FBI-Go works by intercepting network-related system calls (bind, connect, getaddrinfo) using the `LD_PRELOAD` mechanism on Linux. When an application tries to make a network connection, FBI-Go forces it to bind to the specified IP address first.
+Go 1.23 and Linux are required. The legacy shared library additionally needs a C compiler. See [installation and prerequisites](docs/install.md).
 
-## Features
-
-- Force applications to use a specific IP address/network interface
-- Supports both IPv4 and IPv6 addresses
-- Works with any application that uses standard network system calls
-- No modification of the target application required
-- Transparent to the application being run
-
-## Requirements
-
-- Linux operating system
-- Go 1.23.0 or later
-- A C compiler (for CGO)
-
-## Building
-
-You can build FBI-Go using the included Makefile:
-
-```bash
+```sh
 make all
+go test ./...
+go vet ./...
 ```
 
-This will build both the shared library (`binder.so`) and the loader binary (`fbi`).
+The Makefile builds `fbi` and `binder.so` in this directory. For the legacy mode, keep both files together.
 
-To build components separately:
+## Host inspection
 
-```bash
-# Build just the shared library
-make build-binder
-
-# Build just the loader
-make build-loader
+```sh
+./fbi version
+./fbi multiwan scan
+./fbi multiwan status --json
+./fbi multiwan doctor --json
+./fbi multiwan plan --json
+./fbi multiwan plan-m2 internal/routing/testdata/fedora_topology.json --json
 ```
 
-## Installation
+These commands require no sudo and never change routing, DNS, nftables, NetworkManager, or sysctls. `doctor` reports host compatibility read-only; denied inventory reads are `UNKNOWN`. `scan` reports addresses, routes, counters, carrier/operstate, and conservative IPv4 WAN candidates. `status` reports that host enforcement and live health probes are absent. `plan-m2` reads a JSON inventory and reports proposed resources or rejection reasons. The included fixture is synthetic. A candidate is **not** proof of Internet reachability or independent uplinks. See [CLI commands](docs/cli.md) and [network discovery](docs/network-discovery.md).
 
-After building, you can install FBI-Go by copying the `fbi` binary and `binder.so` to a directory in your PATH:
+The primary discovery path uses Linux netlink. Where a restricted environment denies even read-only netlink access, `/sys`, `/proc`, and interface ioctls provide limited fallback data. The output warns about missing policy tables/rules; empty addresses or routes in such environments must not be treated as proof that the host has none.
 
-```bash
-sudo cp fbi binder.so /usr/local/bin/
+## Legacy ForceBindIP
+
+```sh
+./fbi 192.0.2.10 curl https://example.com
 ```
 
-## Usage
+This sets `LD_PRELOAD` and `FORCE_BIND_IP` for the launched process using the existing `binder.so`. It works only for applications and socket calls the library can intercept. It does not guarantee that a chosen interface is used, and it is not the Multi-WAN routing engine. IPv4 and IPv6 address strings are accepted by the legacy library; behavior depends on the application's socket family.
 
-```bash
-fbi <IP_ADDRESS> <COMMAND> [ARGS...]
-```
+## Application policies and local control
 
-### Examples
+`fbi app list` discovers desktop entries from XDG directories. `fbi app policy list/show/set/remove` manages the calling user's TOML policy file. These commands change configuration only. The managed `app run` launcher requires an explicitly owned test namespace and rejects ordinary host execution. Saved policies affect future managed launches and new connections, not established TCP connections or already running processes.
 
-Force curl to use a specific IP address:
-```bash
-fbi 192.168.1.100 curl example.com
-```
+The version 1 Unix socket service is unprivileged and read-only. It exposes status, diagnostics and plan previews; mutation methods and `HOST_APPLY` are rejected. See [the IPC protocol](docs/daemon-ipc.md) and [UI backend contract](docs/ui-backend-contract.md).
 
-Force curl to use a specific IPv6 address:
-```bash
-fbi 2001:db8::1 curl example.com
-```
+## Isolated validation and limitations
 
-Force a web browser to use a specific interface:
-```bash
-fbi 10.0.0.5 firefox
-```
+The namespace backend generates owned policy routes and nftables rules for new IPv4 TCP/UDP flows. Managed IPv4-only application namespaces have a kernel-enforced IPv6 fail-closed guard. DNS and routing tests use isolated synthetic WANs. The rootless suite is run with `bash scripts/test-rootless-netns.sh`; the VM suite has separate snapshot and interactive approval gates. Neither suite proves production host compatibility. D-Bus activation, Flatpak, Wayland, local host services, and application-specific DNS clients are not generally supported. The project does not implement bonding or packet striping; a single TCP connection does not gain additive bandwidth.
 
-Run a server application binding to a specific IP:
-```bash
-fbi 172.16.1.5 python -m http.server 8080
-```
-
-### Notes
-
-- You must use an IP address that actually exists on one of your network interfaces
-- To see your available IP addresses, run: `ip addr`
-- Both IPv4 and IPv6 addresses are supported
-- The application being run must use standard system calls for networking
-
-## How It Works
-
-FBI-Go consists of two main components:
-
-1. A shared library (`binder.so`) that intercepts network-related system calls
-2. A loader program (`fbi`) that sets up the environment and executes the target application
-
-When you run the `fbi` command, it:
-1. Sets the `LD_PRELOAD` environment variable to point to the `binder.so` library
-2. Sets the `FORCE_BIND_IP` environment variable to your specified IP
-3. Executes your command with its arguments
-
-The intercepted system calls then ensure that all network connections are bound to the specified IP address.
-
-## Limitations
-
-## Limitations
-
-- Can only bind to IP addresses actually assigned to your interfaces
-- Some applications with special privilege handling may not work correctly
-
-## Troubleshooting
-
-If you encounter issues:
-
-1. Verify that the IP address you're trying to bind to exists on your system
-2. Check that the `binder.so` file is accessible
-3. Make sure the application you're running uses standard network system calls
-4. Run with strace to see what's happening: `strace -f fbi <IP> <command>`
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
-
-## Contributing
-
-Contributions are welcome! Feel free to submit issues or pull requests.
+See [application routing](docs/application-routing.md), [application policies](docs/application-policies.md), [operator safety and recovery](docs/safety.md), and [UI backend contract](docs/ui-backend-contract.md). The MIT license is unchanged.
