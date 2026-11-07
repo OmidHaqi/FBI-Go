@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering;
 #[cfg(feature = "desktop")]
 use std::sync::Arc;
 #[cfg(feature = "desktop")]
-use tauri::State;
+use tauri::{Manager, RunEvent, State};
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
@@ -23,7 +23,14 @@ fn backend_info() -> BackendInfo {
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn daemon_read(method: String) -> Result<Value, String> {
+fn daemon_read(
+    supervisor: State<'_, bridge::DaemonSupervisor>,
+    method: String,
+) -> Result<Value, String> {
+    if !bridge::valid_method(&method) {
+        return Err("method is outside the read-only allowlist".into());
+    }
+    supervisor.ensure_running()?;
     bridge::daemon_read(&method)
 }
 
@@ -73,6 +80,7 @@ pub fn run() {
         std::process::exit(1);
     }
     tauri::Builder::default()
+        .manage(bridge::DaemonSupervisor::default())
         .setup(|app| {
             desktop_runtime::setup(app).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
         })
@@ -87,6 +95,13 @@ pub fn run() {
             traffic_snapshot,
             set_tray_mode
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running FBI-Go desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building FBI-Go desktop")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                if let Some(supervisor) = app.try_state::<bridge::DaemonSupervisor>() {
+                    supervisor.shutdown();
+                }
+            }
+        });
 }

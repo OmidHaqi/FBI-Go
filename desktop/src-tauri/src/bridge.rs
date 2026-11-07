@@ -2,17 +2,172 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
-use std::io::{Read, Write};
-use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+use std::io::{self, Read, Write};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
 const MAX_RESPONSE: u64 = 1_048_576;
 const MAX_CLI_OUTPUT: usize = 1_048_576;
 const DEADLINE: Duration = Duration::from_secs(8);
+const DAEMON_STARTUP_DEADLINE: Duration = Duration::from_secs(3);
+
+#[derive(Default)]
+pub struct DaemonSupervisor {
+    owned: Mutex<Option<Child>>,
+}
+
+impl DaemonSupervisor {
+    pub fn shutdown(&self) {
+        if let Ok(mut owned) = self.owned.lock() {
+            if let Some(mut child) = owned.take() {
+                stop_daemon(&mut child);
+            }
+        }
+    }
+
+    pub fn ensure_running(&self) -> Result<(), String> {
+        require_user()?;
+        // An explicit socket is managed by its caller; never start a daemon for it.
+        if std::env::var_os("FBI_GO_SOCKET").is_some() {
+            return Ok(());
+        }
+        let path = socket_path()?;
+        let cli = cli_path()?;
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .ok_or("XDG_RUNTIME_DIR is required for the read-only daemon")?;
+        self.ensure_at(&runtime, &path, &cli)
+    }
+
+    fn ensure_at(&self, runtime: &Path, socket: &Path, cli: &Path) -> Result<(), String> {
+        let mut owned = self
+            .owned
+            .lock()
+            .map_err(|_| "daemon supervisor lock failed")?;
+        match fs::symlink_metadata(socket) {
+            Ok(_) => {
+                return daemon_read_at(socket, "daemon.ping")
+                    .and_then(|result| {
+                        (result["pong"] == true)
+                            .then_some(())
+                            .ok_or("daemon ping did not succeed".into())
+                    })
+                    .map_err(|e| format!("existing daemon socket is unavailable: {e}"));
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("inspect daemon socket: {e}")),
+        }
+        if let Some(child) = owned.as_mut() {
+            if child
+                .try_wait()
+                .map_err(|e| format!("inspect managed daemon: {e}"))?
+                .is_none()
+            {
+                return Err("managed daemon is running but its socket is unavailable".into());
+            }
+            *owned = None;
+        }
+        prepare_default_socket_dir(runtime, socket)?;
+        let mut command = Command::new(cli);
+        command
+            .args(["daemon", "serve", "--dry-run", "--socket"])
+            .arg(socket)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("start bundled read-only daemon: {e}"))?;
+        let start = Instant::now();
+        loop {
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|e| format!("wait for daemon: {e}"))?
+            {
+                let mut message = String::new();
+                if let Some(stderr) = child.stderr.take() {
+                    let _ = stderr.take(4096).read_to_string(&mut message);
+                }
+                return Err(format!(
+                    "read-only daemon exited {status}: {}",
+                    message.trim()
+                ));
+            }
+            if fs::symlink_metadata(socket).is_ok()
+                && daemon_read_at(socket, "daemon.ping").is_ok_and(|value| value["pong"] == true)
+            {
+                *owned = Some(child);
+                return Ok(());
+            }
+            if start.elapsed() >= DAEMON_STARTUP_DEADLINE {
+                stop_daemon(&mut child);
+                return Err("read-only daemon did not become ready within 3 seconds".into());
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
+impl Drop for DaemonSupervisor {
+    fn drop(&mut self) {
+        if let Ok(owned) = self.owned.get_mut() {
+            if let Some(mut child) = owned.take() {
+                stop_daemon(&mut child);
+            }
+        }
+    }
+}
+
+fn stop_daemon(child: &mut Child) {
+    if !matches!(child.try_wait(), Ok(Some(_))) {
+        unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+fn prepare_default_socket_dir(runtime: &Path, socket: &Path) -> Result<(), String> {
+    if !runtime.is_absolute() || socket != runtime.join("fbi-go/control.sock") {
+        return Err("default daemon socket must be inside XDG_RUNTIME_DIR/fbi-go".into());
+    }
+    let uid = unsafe { libc::geteuid() };
+    let valid_private_dir = |path: &Path| -> Result<(), String> {
+        let meta = fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if !meta.is_dir()
+            || meta.file_type().is_symlink()
+            || meta.uid() != uid
+            || meta.mode() & 0o777 != 0o700
+        {
+            return Err(format!(
+                "{} must be an owned private 0700 directory",
+                path.display()
+            ));
+        }
+        Ok(())
+    };
+    valid_private_dir(runtime)?;
+    let parent = socket
+        .parent()
+        .ok_or("daemon socket has no parent directory")?;
+    match fs::DirBuilder::new().mode(0o700).create(parent) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(format!("create private daemon socket directory: {e}")),
+    }
+    valid_private_dir(parent)
+}
 
 #[derive(Serialize)]
 pub struct BackendInfo {
@@ -82,7 +237,7 @@ pub fn backend_info() -> BackendInfo {
     }
 }
 
-fn valid_method(method: &str) -> bool {
+pub(crate) fn valid_method(method: &str) -> bool {
     matches!(
         method,
         "daemon.ping"
@@ -465,6 +620,108 @@ mod tests {
         server.join().unwrap();
         fs::remove_file(path).unwrap();
         fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn packaged_sidecar_starts_read_only_daemon_and_cleans_up() {
+        let target = match std::env::consts::ARCH {
+            "x86_64" => "x86_64-unknown-linux-gnu",
+            "aarch64" => "aarch64-unknown-linux-gnu",
+            other => panic!("unsupported test architecture: {other}"),
+        };
+        let cli = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("binaries")
+            .join(format!("fbi-{target}"));
+        assert!(cli.is_file(), "build the Go sidecar before cargo test");
+        let runtime = std::env::temp_dir().join(format!(
+            "fbi-ui-daemon-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::DirBuilder::new().mode(0o700).create(&runtime).unwrap();
+        let socket = runtime.join("fbi-go/control.sock");
+        let supervisor = DaemonSupervisor::default();
+        thread::scope(|scope| {
+            let calls: Vec<_> = (0..4)
+                .map(|_| scope.spawn(|| supervisor.ensure_at(&runtime, &socket, &cli)))
+                .collect();
+            for call in calls {
+                call.join().unwrap().unwrap();
+            }
+        });
+        assert_eq!(
+            daemon_read_at(&socket, "daemon.ping").unwrap()["pong"],
+            true
+        );
+        assert_eq!(
+            daemon_read_at(&socket, "daemon.capabilities").unwrap()["mode"],
+            "PLAN_ONLY"
+        );
+        assert_eq!(
+            daemon_read_at(&socket, "daemon.capabilities").unwrap()["host_apply"],
+            "UNSUPPORTED"
+        );
+        assert_eq!(fs::symlink_metadata(&socket).unwrap().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::symlink_metadata(socket.parent().unwrap())
+                .unwrap()
+                .mode()
+                & 0o777,
+            0o700
+        );
+
+        // A second desktop instance reuses the authenticated socket without owning its process.
+        let second = DaemonSupervisor::default();
+        second.ensure_at(&runtime, &socket, &cli).unwrap();
+        assert!(second.owned.lock().unwrap().is_none());
+        drop(second);
+        assert!(socket.exists());
+
+        supervisor.shutdown();
+        supervisor.shutdown();
+        assert!(
+            !socket.exists(),
+            "the daemon must remove its owned socket on shutdown"
+        );
+        drop(supervisor);
+        fs::remove_dir(runtime.join("fbi-go")).unwrap();
+        fs::remove_dir(runtime).unwrap();
+    }
+
+    #[test]
+    fn daemon_startup_refuses_nonprivate_or_substituted_directories() {
+        let runtime = std::env::temp_dir().join(format!(
+            "fbi-ui-unsafe-runtime-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::DirBuilder::new().mode(0o700).create(&runtime).unwrap();
+        let socket = runtime.join("fbi-go/control.sock");
+        let foreign = runtime.join("foreign");
+        fs::DirBuilder::new().mode(0o700).create(&foreign).unwrap();
+        std::os::unix::fs::symlink(&foreign, runtime.join("fbi-go")).unwrap();
+        assert!(prepare_default_socket_dir(&runtime, &socket).is_err());
+        assert!(foreign.is_dir());
+        fs::remove_file(runtime.join("fbi-go")).unwrap();
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(prepare_default_socket_dir(&runtime, &socket).is_err());
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+        prepare_default_socket_dir(&runtime, &socket).unwrap();
+        fs::write(&socket, b"foreign").unwrap();
+        assert!(DaemonSupervisor::default()
+            .ensure_at(&runtime, &socket, Path::new("/nonexistent-fbi"))
+            .is_err());
+        assert_eq!(fs::read(&socket).unwrap(), b"foreign");
+        fs::remove_file(socket).unwrap();
+        fs::remove_dir(runtime.join("fbi-go")).unwrap();
+        fs::remove_dir(foreign).unwrap();
+        fs::remove_dir(runtime).unwrap();
     }
 
     #[test]
