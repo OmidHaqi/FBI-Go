@@ -80,6 +80,9 @@ pub fn run() {
         std::process::exit(1);
     }
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            desktop_runtime::show_main_window(app);
+        }))
         .manage(bridge::DaemonSupervisor::default())
         .setup(|app| {
             desktop_runtime::setup(app).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)

@@ -10,6 +10,7 @@ import WindowBar from './WindowBar'
 import { speed, useTraffic } from './traffic'
 import type { TrafficSample } from './traffic'
 import { invoke, isTauri } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 type Page = 'dashboard' | 'networks' | 'applications' | 'routing' | 'diagnostics' | 'settings'
 type Theme = 'system' | 'light' | 'dark'
@@ -184,7 +185,19 @@ function Settings({ data, theme, setTheme }: { data: LiveData; theme: Theme; set
 }
 
 export default function App() {
+  useEffect(() => {
+    const disableWebviewMenu = (event: MouseEvent) => event.preventDefault()
+    document.addEventListener('contextmenu', disableWebviewMenu, true)
+    return () => document.removeEventListener('contextmenu', disableWebviewMenu, true)
+  }, [])
   const [page, setPage] = useState<Page>('dashboard')
+  useEffect(() => {
+    if (!isTauri()) return
+    let active = true
+    let unlisten: (() => void) | undefined
+    void listen('open-networks', () => setPage('networks')).then(stop => { if (active) unlisten = stop; else stop() })
+    return () => { active = false; unlisten?.() }
+  }, [])
   const [data, setData] = useState<LiveData>(demoMode ? demoData : { apps: [], policies: [], errors: [] })
   const [loading, setLoading] = useState(!demoMode)
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null)
