@@ -11,12 +11,9 @@ Requires Go 1.23+ and Linux. Run as your normal user:
 ```sh
 go build -o fbi ./cmd/fbi
 ./fbi multiwan scan --json
-mkdir -p "$XDG_RUNTIME_DIR/fbi-go"
-chmod 700 "$XDG_RUNTIME_DIR/fbi-go"
-./fbi daemon serve --dry-run --socket "$XDG_RUNTIME_DIR/fbi-go/control.sock"
 ```
 
-In another terminal, build and run the [Tauri desktop](desktop/README.md), or install an architecture-matched Linux package when a release is published. The daemon must be started separately by the same user.
+Install an architecture-matched desktop package or [build the desktop](desktop/README.md). The desktop starts its bundled read-only daemon as your user when needed. It creates a private socket under `XDG_RUNTIME_DIR` and stops its child daemon on normal exit.
 
 ## What works
 

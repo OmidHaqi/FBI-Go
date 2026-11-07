@@ -69,8 +69,11 @@ application. The daemon does not yet expose policy writes or launches.
 The Rust bridge connects to the configured private daemon socket, validates
 its filesystem type, mode and owner, and sends only the six version 1
 read-only methods. The UI calls `daemon.capabilities` before requesting status,
-diagnostics and plan. Set `FBI_GO_SOCKET` and `FBI_GO_BIN` when starting the
-desktop client; neither is an authorization mechanism for host mutation.
+diagnostics and plan. With the default socket, the desktop creates a private
+runtime directory and starts its bundled `fbi daemon serve --dry-run` sidecar
+as the same user on demand. `FBI_GO_SOCKET` opts into an externally managed
+socket; `FBI_GO_BIN` selects an absolute executable for development. Neither
+is an authorization mechanism for host mutation.
 Application icons are loaded only from bounded PNG/WebP files within known
 local icon directories; missing icons show a letter fallback.
 
